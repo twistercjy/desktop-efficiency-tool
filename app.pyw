@@ -114,8 +114,13 @@ class Api:
 
     def show_alert(self, title, message):
         def _popup():
+            MB_ICONINFORMATION = 0x40
+            MB_SETFOREGROUND = 0x10000
+            MB_TOPMOST = 0x40000
+            MB_SYSTEMMODAL = 0x1000
             ctypes.windll.user32.MessageBoxW(
-                0, message, title, 0x40 | 0x40000
+                0, message, title,
+                MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST | MB_SYSTEMMODAL
             )
         threading.Thread(target=_popup, daemon=True).start()
 
@@ -364,6 +369,14 @@ HTML = r"""<!DOCTYPE html>
     padding: 2px 8px; border-radius: 980px; white-space: nowrap; flex-shrink: 0;
   }
   .task-item.done .task-time { opacity: 0.4; }
+  .task-meta {
+    display: flex; gap: 6px; flex-wrap: wrap; font-size: 10px; color: var(--text-dim);
+    margin-top: 2px; line-height: 1.3;
+  }
+  .task-meta span { white-space: nowrap; }
+  .task-meta .meta-overdue { color: var(--red); font-weight: 500; }
+  .task-meta .meta-done-time { color: var(--green); }
+  .task-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .q-add { display: flex; gap: 6px; margin-top: 10px; flex-shrink: 0; align-items: center; }
   .q-add input[type="text"] {
     flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px;
@@ -721,15 +734,33 @@ function fmtTime(dt){
   return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());
 }
 function todayStr(){var d=new Date();return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
-function renderTask(q,text,done,tm,doneDate,atEnd){
+function fmtShortDate(ds){
+  if(!ds)return '';
+  var d=new Date(ds);
+  if(isNaN(d))return ds;
+  return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+function renderTask(q,text,done,tm,doneDate,atEnd,createDate,doneTime){
   let c=document.getElementById('tasks-'+q);
   let el=document.createElement('div');
   el.className='task-item'+(done?' done':'');
   el.draggable=true;
   if(tm)el.dataset.time=tm;
   if(doneDate)el.dataset.doneDate=doneDate;
-  let timeHtml=tm?'<span class="task-time">'+esc(fmtTime(tm))+'</span>':'';
-  el.innerHTML='<div class="task-check" onclick="toggleTask(this)"></div><span class="task-text">'+esc(text)+'</span>'+timeHtml+'<div class="task-actions"><button class="task-move" onclick="event.stopPropagation();moveTask(this,\'up\')">\u25B2</button><button class="task-move" onclick="event.stopPropagation();moveTask(this,\'down\')">\u25BC</button><button class="task-del" onclick="event.stopPropagation();this.closest(\'.task-item\').remove();saveAll()">\u2715</button></div>';
+  var cd=createDate||new Date().toISOString();
+  el.dataset.createDate=cd;
+  if(doneTime)el.dataset.doneTime=doneTime;
+  var metaParts=[];
+  metaParts.push('<span>\u521b\u5efa:'+fmtShortDate(cd)+'</span>');
+  if(tm){
+    var isOverdue=!done&&new Date(tm)<new Date();
+    metaParts.push('<span class="'+(isOverdue?'meta-overdue':'')+'">\u622a\u6b62:'+fmtShortDate(tm)+'</span>');
+  }
+  if(doneTime)metaParts.push('<span class="meta-done-time">\u5b8c\u6210:'+fmtShortDate(doneTime)+'</span>');
+  el.innerHTML='<div class="task-check" onclick="toggleTask(this)"></div>'
+    +'<div class="task-content"><span class="task-text">'+esc(text)+'</span>'
+    +'<div class="task-meta">'+metaParts.join('')+'</div></div>'
+    +'<div class="task-actions"><button class="task-move" onclick="event.stopPropagation();moveTask(this,\'up\')">\u25B2</button><button class="task-move" onclick="event.stopPropagation();moveTask(this,\'down\')">\u25BC</button><button class="task-del" onclick="event.stopPropagation();this.closest(\'.task-item\').remove();saveAll()">\u2715</button></div>';
   var ts=el.querySelector('.task-text'), _ct=null;
   ts.addEventListener('click',function(e){e.stopPropagation();if(_ct){clearTimeout(_ct);_ct=null;return;}_ct=setTimeout(function(){_ct=null;toggleTask(ts.previousElementSibling);},250);});
   ts.addEventListener('dblclick',function(e){if(_ct){clearTimeout(_ct);_ct=null;}editTask.call(this,e);});
@@ -777,15 +808,30 @@ document.querySelectorAll('.q-tasks').forEach(zone=>{
   });
 });
 
+function refreshTaskMeta(item){
+  var meta=item.querySelector('.task-meta');
+  if(!meta)return;
+  var parts=[];
+  if(item.dataset.createDate)parts.push('<span>\u521b\u5efa:'+fmtShortDate(item.dataset.createDate)+'</span>');
+  if(item.dataset.time){
+    var isOverdue=!item.classList.contains('done')&&new Date(item.dataset.time)<new Date();
+    parts.push('<span class="'+(isOverdue?'meta-overdue':'')+'">\u622a\u6b62:'+fmtShortDate(item.dataset.time)+'</span>');
+  }
+  if(item.dataset.doneTime)parts.push('<span class="meta-done-time">\u5b8c\u6210:'+fmtShortDate(item.dataset.doneTime)+'</span>');
+  meta.innerHTML=parts.join('');
+}
 function toggleTask(ch){
   let item=ch.closest('.task-item');
   item.classList.toggle('done');
   if(item.classList.contains('done')){
     item.dataset.doneDate=todayStr();
+    item.dataset.doneTime=new Date().toISOString();
     item.parentElement.appendChild(item);
   } else {
     delete item.dataset.doneDate;
+    delete item.dataset.doneTime;
   }
+  refreshTaskMeta(item);
   saveAll();
 }
 
@@ -793,7 +839,7 @@ function saveAll(){
   let d={};
   ['q1','q2','q3','q4'].forEach(q=>{
     let items=document.getElementById('tasks-'+q).querySelectorAll('.task-item');
-    d[q]=Array.from(items).map(el=>({text:el.querySelector('.task-text').textContent,done:el.classList.contains('done'),time:el.dataset.time||'',doneDate:el.dataset.doneDate||''}));
+    d[q]=Array.from(items).map(el=>({text:el.querySelector('.task-text').textContent,done:el.classList.contains('done'),time:el.dataset.time||'',doneDate:el.dataset.doneDate||'',createDate:el.dataset.createDate||'',doneTime:el.dataset.doneTime||''}));
   });
   d.history=window._history||[];
   pywebview.api.save_data(JSON.stringify(d));
@@ -802,7 +848,7 @@ function saveAll(){
 async function loadAll(){
   let raw=await pywebview.api.load_data();
   let d=JSON.parse(raw);
-  ['q1','q2','q3','q4'].forEach(q=>{(d[q]||[]).forEach(t=>renderTask(q,t.text,t.done,t.time||'',t.doneDate||'',true));});
+  ['q1','q2','q3','q4'].forEach(q=>{(d[q]||[]).forEach(t=>renderTask(q,t.text,t.done,t.time||'',t.doneDate||'',true,t.createDate||'',t.doneTime||''));});
   window._history=d.history||[];
   (d.history||[]).forEach(h=>addHistoryUI(h.task,h.time,h.date));
 }
@@ -996,6 +1042,12 @@ function updateDateLabel(ds){
   document.getElementById('report-date-label').textContent=label;
 }
 
+function dateOfISO(iso){
+  if(!iso)return '';
+  var d=new Date(iso);
+  if(isNaN(d))return '';
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+}
 function generateReport(dateStr){
   if(!dateStr) dateStr=todayStr();
   _reportDate=dateStr;
@@ -1010,18 +1062,26 @@ function generateReport(dateStr){
     var doneList=[],pendList=[];
     items.forEach(function(el){
       var text=el.querySelector('.task-text').textContent;
-      var tm=el.dataset.time?fmtTime(el.dataset.time):'';
+      var dueStr=el.dataset.time?fmtTime(el.dataset.time):'';
+      var doneTimeStr=el.dataset.doneTime?fmtShortDate(el.dataset.doneTime):'';
+      var createDay=dateOfISO(el.dataset.createDate);
       if(el.classList.contains('done')){
         var dd=el.dataset.doneDate||'';
-        if(dd===dateStr){doneList.push({text:text,time:tm});totalDone++;}
+        if(dd===dateStr){doneList.push({text:text,due:dueStr,doneAt:doneTimeStr});totalDone++;}
       } else {
-        if(isToday){pendList.push({text:text,time:tm});totalPending++;}
+        var belongDay=createDay||'';
+        if(belongDay===dateStr||(isToday&&!belongDay)){pendList.push({text:text,due:dueStr});totalPending++;}
       }
     });
     if(!doneList.length && !pendList.length)return;
     html+='<div class="report-section"><h3>'+qNames[q]+'</h3><ul>';
-    doneList.forEach(function(t){html+='<li>\u2705 '+esc(t.text)+(t.time?' <span class="r-time">'+esc(t.time)+'</span>':'')+'</li>';});
-    pendList.forEach(function(t){html+='<li>\u23F3 '+esc(t.text)+(t.time?' <span class="r-time">'+esc(t.time)+'</span>':'')+'</li>';});
+    doneList.forEach(function(t){
+      var extra='';
+      if(t.due)extra+=' \u622a\u6b62:'+esc(t.due);
+      if(t.doneAt)extra+=' \u5b8c\u6210:'+esc(t.doneAt);
+      html+='<li>\u2705 '+esc(t.text)+(extra?' <span class="r-time">'+extra+'</span>':'')+'</li>';
+    });
+    pendList.forEach(function(t){html+='<li>\u23F3 '+esc(t.text)+(t.due?' <span class="r-time">\u622a\u6b62:'+esc(t.due)+'</span>':'')+'</li>';});
     html+='</ul></div>';
   });
   var hist=(window._history||[]).filter(function(h){return (h.dateStr||'')===dateStr;});
@@ -1052,12 +1112,22 @@ function copyReport(){
     var sectionLines=[];
     items.forEach(function(el){
       var text=el.querySelector('.task-text').textContent;
-      var tm=el.dataset.time?fmtTime(el.dataset.time):'';
+      var dueStr=el.dataset.time?fmtTime(el.dataset.time):'';
+      var doneTimeStr=el.dataset.doneTime?fmtShortDate(el.dataset.doneTime):'';
+      var createDay=dateOfISO(el.dataset.createDate);
       if(el.classList.contains('done')){
         var dd=el.dataset.doneDate||'';
-        if(dd===dateStr) sectionLines.push('  \u2705 '+text+(tm?' ('+tm+')':''));
+        if(dd===dateStr){
+          var extra='';
+          if(dueStr)extra+=' \u622a\u6b62:'+dueStr;
+          if(doneTimeStr)extra+=' \u5b8c\u6210:'+doneTimeStr;
+          sectionLines.push('  \u2705 '+text+(extra?' ('+extra.trim()+')':''));
+        }
       } else {
-        if(isToday) sectionLines.push('  \u23F3 '+text+(tm?' ('+tm+')':''));
+        var belongDay=createDay||'';
+        if(belongDay===dateStr||(isToday&&!belongDay)){
+          sectionLines.push('  \u23F3 '+text+(dueStr?' (\u622a\u6b62:'+dueStr+')':''));
+        }
       }
     });
     if(sectionLines.length){
@@ -1080,23 +1150,28 @@ function copyReport(){
   });
 }
 
-var _moveLastDir='',_moveLastTime=0,_moveLastItem=null;
+var _movePendingTimer=null;
 function moveTask(btn,dir){
   let item=btn.closest('.task-item'), parent=item.parentElement;
-  let now=Date.now();
-  let dbl=(dir===_moveLastDir && item===_moveLastItem && now-_moveLastTime<400);
-  _moveLastDir=dir;_moveLastTime=now;_moveLastItem=item;
-  if(dbl){
+  if(_movePendingTimer && _movePendingTimer.item===item && _movePendingTimer.dir===dir){
+    clearTimeout(_movePendingTimer.tid);
+    _movePendingTimer=null;
     if(dir==='up'){parent.insertBefore(item,parent.firstChild);}
     else{parent.appendChild(item);}
-  } else {
+    saveAll();
+    return;
+  }
+  if(_movePendingTimer){clearTimeout(_movePendingTimer.tid);_movePendingTimer=null;}
+  var tid=setTimeout(function(){
+    _movePendingTimer=null;
     if(dir==='up' && item.previousElementSibling){
       parent.insertBefore(item,item.previousElementSibling);
     } else if(dir==='down' && item.nextElementSibling){
       parent.insertBefore(item.nextElementSibling,item);
     }
-  }
-  saveAll();
+    saveAll();
+  },300);
+  _movePendingTimer={tid:tid,item:item,dir:dir};
 }
 
 async function setApiKey(){
@@ -1170,8 +1245,8 @@ def main():
             "桌面效率小工具",
             html=HTML,
             js_api=api,
-            width=920,
-            height=720,
+            width=1050,
+            height=860,
             min_size=(700, 500),
             background_color="#f5f5f7",
         )

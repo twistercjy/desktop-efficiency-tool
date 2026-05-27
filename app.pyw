@@ -26,7 +26,7 @@ try:
 except ImportError:
     HAS_WINSOUND = False
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 GITHUB_REPO = "twistercjy/desktop-efficiency-tool"
 UPDATE_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 DATA_FILE = os.path.join(os.path.expanduser("~"), ".desktop_tool_data.json")
@@ -113,28 +113,49 @@ class Api:
             threading.Thread(target=_beep, daemon=True).start()
 
     def show_alert(self, title, message):
-        try:
-            FLASHW_ALL = 0x03
-            FLASHW_TIMERNOFG = 0x0C
-            class FLASHWINFO(ctypes.Structure):
-                _fields_ = [
-                    ("cbSize", ctypes.c_uint),
-                    ("hwnd", ctypes.c_void_p),
-                    ("dwFlags", ctypes.c_uint),
-                    ("uCount", ctypes.c_uint),
-                    ("dwTimeout", ctypes.c_uint),
-                ]
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
-            finfo = FLASHWINFO(
-                cbSize=ctypes.sizeof(FLASHWINFO),
-                hwnd=hwnd,
-                dwFlags=FLASHW_ALL | FLASHW_TIMERNOFG,
-                uCount=5,
-                dwTimeout=0,
-            )
-            ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))
-        except Exception:
-            pass
+        def _notify():
+            try:
+                from winrt.windows.ui.notifications import (
+                    ToastNotificationManager, ToastNotification,
+                )
+                from winrt.windows.data.xml.dom import XmlDocument
+                xml = XmlDocument()
+                xml.load_xml(
+                    f'<toast duration="long"><visual><binding template="ToastGeneric">'
+                    f'<text>{title}</text>'
+                    f'<text>{message}</text>'
+                    f'</binding></visual>'
+                    f'<audio src="ms-winsoundevent:Notification.Default"/>'
+                    f'</toast>'
+                )
+                notifier = ToastNotificationManager.create_toast_notifier("桌面效率小工具")
+                notifier.show(ToastNotification(xml))
+                return
+            except Exception:
+                pass
+            try:
+                FLASHW_ALL = 0x03
+                FLASHW_TIMERNOFG = 0x0C
+                class FLASHWINFO(ctypes.Structure):
+                    _fields_ = [
+                        ("cbSize", ctypes.c_uint),
+                        ("hwnd", ctypes.c_void_p),
+                        ("dwFlags", ctypes.c_uint),
+                        ("uCount", ctypes.c_uint),
+                        ("dwTimeout", ctypes.c_uint),
+                    ]
+                hwnd = ctypes.windll.user32.GetForegroundWindow()
+                finfo = FLASHWINFO(
+                    cbSize=ctypes.sizeof(FLASHWINFO),
+                    hwnd=hwnd,
+                    dwFlags=FLASHW_ALL | FLASHW_TIMERNOFG,
+                    uCount=5,
+                    dwTimeout=0,
+                )
+                ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))
+            except Exception:
+                pass
+        threading.Thread(target=_notify, daemon=True).start()
 
     def get_version(self):
         return APP_VERSION
@@ -677,7 +698,7 @@ HTML = r"""<!DOCTYPE html>
   <div class="modal">
     <div class="modal-icon">⏰</div>
     <h2>时间到！</h2>
-    <p id="modal-msg">是时候去做任务了</p>
+    <p id="modal-msg"></p>
     <button class="modal-btn" onclick="closeModal()">知道了</button>
   </div>
 </div>
@@ -737,7 +758,7 @@ function fmtTime(dt){
   return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());
 }
 function todayStr(){var d=new Date();return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
-function renderTask(q,text,done,tm,doneDate){
+function renderTask(q,text,done,tm,doneDate,atEnd){
   let c=document.getElementById('tasks-'+q);
   let el=document.createElement('div');
   el.className='task-item'+(done?' done':'');
@@ -759,7 +780,8 @@ function renderTask(q,text,done,tm,doneDate){
     document.querySelectorAll('.q-tasks').forEach(t=>t.classList.remove('drag-over'));
     window._dragEl=null;
   });
-  c.appendChild(el);
+  if(atEnd){c.appendChild(el);}
+  else{c.insertBefore(el,c.firstChild);}
 }
 
 function getDragAfter(zone,y){
@@ -817,7 +839,7 @@ function saveAll(){
 async function loadAll(){
   let raw=await pywebview.api.load_data();
   let d=JSON.parse(raw);
-  ['q1','q2','q3','q4'].forEach(q=>{(d[q]||[]).forEach(t=>renderTask(q,t.text,t.done,t.time||'',t.doneDate||''));});
+  ['q1','q2','q3','q4'].forEach(q=>{(d[q]||[]).forEach(t=>renderTask(q,t.text,t.done,t.time||'',t.doneDate||'',true));});
   window._history=d.history||[];
   (d.history||[]).forEach(h=>addHistoryUI(h.task,h.time,h.date));
 }
@@ -936,8 +958,8 @@ function stopUp(){
 
 function onDone(){
   pywebview.api.play_sound();
-  pywebview.api.show_alert('\u65f6\u95f4\u5230','\u662f\u65f6\u5019\u53bb\u505a\u300c'+currentTask+'\u300d\u4e86\uff01');
-  document.getElementById('modal-msg').textContent='\u662f\u65f6\u5019\u53bb\u505a\u300c'+currentTask+'\u300d\u4e86\uff01';
+  pywebview.api.show_alert('\u65f6\u95f4\u5230',currentTask+' \u2014 \u8ba1\u65f6\u5df2\u7ed3\u675f');
+  document.getElementById('modal-msg').textContent=currentTask;
   document.getElementById('modal-overlay').classList.add('show');
   let hh=Math.floor(timerTotal/3600),mm=Math.floor((timerTotal%3600)/60);
   let ts='';if(hh>0)ts+=hh+'\u5c0f\u65f6';if(mm>0)ts+=mm+'\u5206\u949f';if(!ts)ts=timerTotal+'\u79d2';

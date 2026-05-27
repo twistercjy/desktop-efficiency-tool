@@ -26,7 +26,7 @@ try:
 except ImportError:
     HAS_WINSOUND = False
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 GITHUB_REPO = "twistercjy/desktop-efficiency-tool"
 UPDATE_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 DATA_FILE = os.path.join(os.path.expanduser("~"), ".desktop_tool_data.json")
@@ -113,49 +113,11 @@ class Api:
             threading.Thread(target=_beep, daemon=True).start()
 
     def show_alert(self, title, message):
-        def _notify():
-            try:
-                from winrt.windows.ui.notifications import (
-                    ToastNotificationManager, ToastNotification,
-                )
-                from winrt.windows.data.xml.dom import XmlDocument
-                xml = XmlDocument()
-                xml.load_xml(
-                    f'<toast duration="long"><visual><binding template="ToastGeneric">'
-                    f'<text>{title}</text>'
-                    f'<text>{message}</text>'
-                    f'</binding></visual>'
-                    f'<audio src="ms-winsoundevent:Notification.Default"/>'
-                    f'</toast>'
-                )
-                notifier = ToastNotificationManager.create_toast_notifier("桌面效率小工具")
-                notifier.show(ToastNotification(xml))
-                return
-            except Exception:
-                pass
-            try:
-                FLASHW_ALL = 0x03
-                FLASHW_TIMERNOFG = 0x0C
-                class FLASHWINFO(ctypes.Structure):
-                    _fields_ = [
-                        ("cbSize", ctypes.c_uint),
-                        ("hwnd", ctypes.c_void_p),
-                        ("dwFlags", ctypes.c_uint),
-                        ("uCount", ctypes.c_uint),
-                        ("dwTimeout", ctypes.c_uint),
-                    ]
-                hwnd = ctypes.windll.user32.GetForegroundWindow()
-                finfo = FLASHWINFO(
-                    cbSize=ctypes.sizeof(FLASHWINFO),
-                    hwnd=hwnd,
-                    dwFlags=FLASHW_ALL | FLASHW_TIMERNOFG,
-                    uCount=5,
-                    dwTimeout=0,
-                )
-                ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))
-            except Exception:
-                pass
-        threading.Thread(target=_notify, daemon=True).start()
+        def _popup():
+            ctypes.windll.user32.MessageBoxW(
+                0, message, title, 0x40 | 0x40000
+            )
+        threading.Thread(target=_popup, daemon=True).start()
 
     def get_version(self):
         return APP_VERSION
@@ -698,7 +660,6 @@ HTML = r"""<!DOCTYPE html>
   <div class="modal">
     <div class="modal-icon">⏰</div>
     <h2>时间到！</h2>
-    <p id="modal-msg"></p>
     <button class="modal-btn" onclick="closeModal()">知道了</button>
   </div>
 </div>
@@ -723,6 +684,8 @@ function addTaskFromUI(q,inp){
   let timeInp=inp.parentElement.querySelector('.q-time-input');
   let tm=timeInp?timeInp.value:'';
   renderTask(q,t,false,tm); inp.value=''; saveAll(); setDefaultTimes();
+  let tasksEl=document.getElementById('tasks-'+q);
+  if(tasksEl)tasksEl.scrollTop=0;
 }
 function addTask(q,text,done,tm){
   renderTask(q,text,done||false,tm||'');
@@ -958,8 +921,7 @@ function stopUp(){
 
 function onDone(){
   pywebview.api.play_sound();
-  pywebview.api.show_alert('\u65f6\u95f4\u5230',currentTask+' \u2014 \u8ba1\u65f6\u5df2\u7ed3\u675f');
-  document.getElementById('modal-msg').textContent=currentTask;
+  pywebview.api.show_alert('\u65f6\u95f4\u5230','\u8ba1\u65f6\u5df2\u7ed3\u675f');
   document.getElementById('modal-overlay').classList.add('show');
   let hh=Math.floor(timerTotal/3600),mm=Math.floor((timerTotal%3600)/60);
   let ts='';if(hh>0)ts+=hh+'\u5c0f\u65f6';if(mm>0)ts+=mm+'\u5206\u949f';if(!ts)ts=timerTotal+'\u79d2';
@@ -1118,12 +1080,21 @@ function copyReport(){
   });
 }
 
+var _moveLastDir='',_moveLastTime=0,_moveLastItem=null;
 function moveTask(btn,dir){
   let item=btn.closest('.task-item'), parent=item.parentElement;
-  if(dir==='up' && item.previousElementSibling){
-    parent.insertBefore(item,item.previousElementSibling);
-  } else if(dir==='down' && item.nextElementSibling){
-    parent.insertBefore(item.nextElementSibling,item);
+  let now=Date.now();
+  let dbl=(dir===_moveLastDir && item===_moveLastItem && now-_moveLastTime<400);
+  _moveLastDir=dir;_moveLastTime=now;_moveLastItem=item;
+  if(dbl){
+    if(dir==='up'){parent.insertBefore(item,parent.firstChild);}
+    else{parent.appendChild(item);}
+  } else {
+    if(dir==='up' && item.previousElementSibling){
+      parent.insertBefore(item,item.previousElementSibling);
+    } else if(dir==='down' && item.nextElementSibling){
+      parent.insertBefore(item.nextElementSibling,item);
+    }
   }
   saveAll();
 }
